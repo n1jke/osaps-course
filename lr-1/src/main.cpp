@@ -55,7 +55,13 @@ long long valueAt(long long i) {
 long long calculate(long long start, long long end) {
     long long sum = 0;
     for (long long i = start; i <= end; ++i) {
-        sum += valueAt(i);
+        long long val = valueAt(i);
+        sum += val;
+
+        volatile long long dummy = val;
+        for (int k = 0; k < 50; ++k) {
+            dummy = (dummy * 31 + 17) % 1000000007; 
+        }
     }
     return sum;
 }
