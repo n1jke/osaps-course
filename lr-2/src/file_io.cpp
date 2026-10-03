@@ -183,7 +183,7 @@ void write_all(File& file, const codec::Bytes& bytes) {
 }
 
 Stats scan(File& file, const std::function<void(const codec::Record&)>& visitor = {},
-          bool exclude_visitor = false) {
+          bool exclude_visitor = false, const codec::Uuid* stop_id = nullptr) {
     const double frequency = counter_frequency();
     const auto started = counter_now();
     LONGLONG output_ticks = 0;
@@ -228,6 +228,15 @@ Stats scan(File& file, const std::function<void(const codec::Record&)>& visitor 
             } else {
                 visitor(record);
             }
+        }
+
+        // A successful search checks only the records up to its first match.
+        // For the last record, continue to the end-of-file check below.
+        if (stop_id && record.id == *stop_id && i + 1 < result.count) {
+            result.processed_bytes = position;
+            result.elapsed_ms = milliseconds(counter_now() - started - output_ticks, frequency);
+
+            return result;
         }
     }
 
@@ -480,7 +489,7 @@ FindResult find(const std::string& path, const codec::Uuid& id) {
             result.record = record;
             result.found = true;
         }
-    });
+    }, false, &id);
 
     close(file);
 
