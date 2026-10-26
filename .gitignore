@@ -1,0 +1,8 @@
+.DS_Store
+Thumbs.db
+~$*
+.history/
+.vscode/
+build/
+cmake-build-*/
+*.log
