@@ -1,3 +1,7 @@
+#include "shared.h"
+#include "sync.h"
+#include "table.h"
+
 #include <windows.h>
 
 #include <array>
@@ -6,13 +10,9 @@
 #include <string>
 #include <vector>
 
-namespace {
-constexpr std::size_t record_count = 100;
-constexpr DWORD wait_limit_ms = 30000;
-
-struct SharedData {
-    std::uint32_t records[record_count];
-};
+namespace app {
+constexpr DWORD wait_limit_ms = shared::wait_ms;
+constexpr int operations_per_worker = 100;
 
 void report_error(const char* operation, DWORD error) {
     char* message = nullptr;
@@ -27,13 +27,13 @@ void report_error(const char* operation, DWORD error) {
 }
 
 int worker(const char* name, const char* role, const char* number) {
-    HANDLE mapping = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
+    HANDLE mapping = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, name);
     if (!mapping) {
         report_error("OpenFileMapping", GetLastError());
         return 1;
     }
-    const auto* data = static_cast<const SharedData*>(
-        MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(SharedData)));
+    auto* data = static_cast<shared::Data*>(
+        MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(shared::Data)));
     if (!data) {
         const DWORD error = GetLastError();
         CloseHandle(mapping);
@@ -41,10 +41,39 @@ int worker(const char* name, const char* role, const char* number) {
         return 1;
     }
 
-    // This stage only reads initialized data; concurrent writes arrive with synchronization.
-    std::cout << role << ' ' << number << " PID=" << GetCurrentProcessId()
-              << " STATE=READY RECORDS=" << record_count
-              << " FIRST=" << data->records[0] << std::endl;
+    sync::Objects objects;
+    if (!sync::open(objects, name)) {
+        sync::close(objects);
+        UnmapViewOfFile(data);
+        CloseHandle(mapping);
+        return 1;
+    }
+
+    const bool reader = std::string(role) == "reader";
+    bool ok = true;
+    for (int i = 0; i < operations_per_worker && ok; ++i) {
+        std::cout << '[' << GetTickCount64() - data->start_ms << " ms] "
+                  << role << ' ' << number << " PID=" << GetCurrentProcessId()
+                  << " STATE=WAITING" << std::endl;
+        if (!(reader ? sync::enter_read(objects, *data) : sync::enter_write(objects, *data))) {
+            ok = false;
+            break;
+        }
+        std::cout << '[' << GetTickCount64() - data->start_ms << " ms] "
+                  << role << ' ' << number << " PID=" << GetCurrentProcessId()
+                  << " STATE=" << (reader ? "READING" : "WRITING") << std::endl;
+        if (reader) {
+            table::read(*data);
+            ok = sync::leave_read(objects, *data);
+        } else {
+            table::write(*data, static_cast<std::size_t>(i) % shared::record_count);
+            ok = sync::leave_write(objects, *data);
+        }
+    }
+    std::cout << '[' << GetTickCount64() - data->start_ms << " ms] "
+              << role << ' ' << number << " PID=" << GetCurrentProcessId()
+              << " STATE=" << (ok ? "FINISHED" : "FAILED") << std::endl;
+    sync::close(objects);
     const BOOL unmapped = UnmapViewOfFile(data);
     const DWORD unmap_error = unmapped ? ERROR_SUCCESS : GetLastError();
     CloseHandle(mapping);
@@ -52,13 +81,13 @@ int worker(const char* name, const char* role, const char* number) {
         report_error("UnmapViewOfFile", unmap_error);
         return 1;
     }
-    return 0;
+    return ok ? 0 : 1;
 }
 
 int coordinator() {
     const std::string name = "Local\\lab4_mapping_" + std::to_string(GetCurrentProcessId());
     HANDLE mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
-                                        0, sizeof(SharedData), name.c_str());
+                                        0, sizeof(shared::Data), name.c_str());
     if (!mapping) {
         report_error("CreateFileMapping", GetLastError());
         return 1;
@@ -68,8 +97,8 @@ int coordinator() {
         CloseHandle(mapping);
         return 1;
     }
-    auto* data = static_cast<SharedData*>(
-        MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, sizeof(SharedData)));
+    auto* data = static_cast<shared::Data*>(
+        MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, sizeof(shared::Data)));
     if (!data) {
         const DWORD error = GetLastError();
         CloseHandle(mapping);
@@ -77,6 +106,17 @@ int coordinator() {
         return 1;
     }
     *data = {};
+    data->start_ms = GetTickCount64();
+    for (auto& record : data->records) {
+        record.check = shared::check_value(record.value);
+    }
+    sync::Objects objects;
+    if (!sync::create(objects, name)) {
+        sync::close(objects);
+        UnmapViewOfFile(data);
+        CloseHandle(mapping);
+        return 1;
+    }
 
     std::array<char, 32768> executable{};
     DWORD length = GetModuleFileNameA(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
@@ -155,6 +195,12 @@ int coordinator() {
 
         CloseHandle(process);
     }
+    const LONG violations = InterlockedCompareExchange(&data->violations, 0, 0);
+    std::cout << "invariant_violations=" << violations << std::endl;
+    if (violations != 0) {
+        ok = false;
+    }
+    sync::close(objects);
     if (!UnmapViewOfFile(data)) {
         report_error("UnmapViewOfFile", GetLastError());
         ok = false;
@@ -162,15 +208,15 @@ int coordinator() {
     CloseHandle(mapping);
     return ok ? 0 : 1;
 }
-} // namespace
+} // namespace app
 
 int main(int argc, char** argv) {
     if (argc == 1) {
-        return coordinator();
+        return app::coordinator();
     }
 
     if (argc == 5 && std::string(argv[1]) == "--worker") {
-        return worker(argv[2], argv[3], argv[4]);
+        return app::worker(argv[2], argv[3], argv[4]);
     }
     std::cerr << "usage: lab4 (base stage; experiment parameters not implemented yet)\n";
     return 2;
