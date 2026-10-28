@@ -2,7 +2,7 @@
 
 namespace table {
 
-void read(shared::Data& data) {
+void read(shared::Data& data, DWORD duration_ms) {
     InterlockedIncrement(&data.active_readers);
 
     if (InterlockedCompareExchange(&data.active_writers, 0, 0) != 0) {
@@ -15,6 +15,7 @@ void read(shared::Data& data) {
         }
     }
 
+    Sleep(duration_ms);
     InterlockedDecrement(&data.active_readers);
 }
 

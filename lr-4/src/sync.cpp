@@ -6,7 +6,7 @@
 namespace sync {
 namespace {
 
-bool wait(HANDLE handle, const char* name) {
+bool wait(HANDLE handle, const char* name, shared::Data& data) {
     const DWORD result = WaitForSingleObject(handle, shared::wait_ms);
     if (result == WAIT_OBJECT_0) {
         return true;
@@ -17,6 +17,7 @@ bool wait(HANDLE handle, const char* name) {
         std::cerr << name << ": mutex abandoned\n";
         ReleaseMutex(handle);
     } else {
+        InterlockedIncrement(&data.timeouts);
         std::cerr << name << ": wait timed out\n";
     }
     return false;
@@ -91,13 +92,13 @@ void close(Objects& o) {
 }
 
 bool enter_read(Objects& o, shared::Data& d) {
-    if (!wait(o.read_gate, "read gate")) return false;
-    if (!wait(o.readers_mutex, "readers mutex")) {
+    if (!wait(o.read_gate, "read gate", d)) return false;
+    if (!wait(o.readers_mutex, "readers mutex", d)) {
         release_semaphore(o.read_gate);
         return false;
     }
     ++d.readers;
-    if (d.readers == 1 && !wait(o.resource, "resource")) {
+    if (d.readers == 1 && !wait(o.resource, "resource", d)) {
         --d.readers;
         release_mutex(o.readers_mutex);
         release_semaphore(o.read_gate);
@@ -109,7 +110,7 @@ bool enter_read(Objects& o, shared::Data& d) {
 }
 
 bool leave_read(Objects& o, shared::Data& d) {
-    if (!wait(o.readers_mutex, "readers mutex")) return false;
+    if (!wait(o.readers_mutex, "readers mutex", d)) return false;
     --d.readers;
     bool ok = true;
     if (d.readers == 0) ok = release_semaphore(o.resource);
@@ -117,18 +118,18 @@ bool leave_read(Objects& o, shared::Data& d) {
 }
 
 bool enter_write(Objects& o, shared::Data& d) {
-    if (!wait(o.writers_mutex, "writers mutex")) return false;
+    if (!wait(o.writers_mutex, "writers mutex", d)) return false;
     ++d.writers;
-    if (d.writers == 1 && !wait(o.read_gate, "read gate")) {
+    if (d.writers == 1 && !wait(o.read_gate, "read gate", d)) {
         --d.writers;
         release_mutex(o.writers_mutex);
         return false;
     }
     if (!release_mutex(o.writers_mutex)) return false;
-    if (wait(o.resource, "resource")) return true;
+    if (wait(o.resource, "resource", d)) return true;
 
     // Undo registration after a timeout; the whole experiment still fails.
-    if (wait(o.writers_mutex, "writers mutex")) {
+    if (wait(o.writers_mutex, "writers mutex", d)) {
         --d.writers;
         if (d.writers == 0) release_semaphore(o.read_gate);
         release_mutex(o.writers_mutex);
@@ -138,7 +139,7 @@ bool enter_write(Objects& o, shared::Data& d) {
 
 bool leave_write(Objects& o, shared::Data& d) {
     if (!release_semaphore(o.resource)) return false;
-    if (!wait(o.writers_mutex, "writers mutex")) return false;
+    if (!wait(o.writers_mutex, "writers mutex", d)) return false;
     --d.writers;
     bool ok = true;
     if (d.writers == 0) ok = release_semaphore(o.read_gate);

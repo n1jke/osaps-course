@@ -7,6 +7,7 @@ endif()
 
 add_executable(lab4
     src/main.cpp
+    src/cli.cpp
     src/sync.cpp
     src/table.cpp
 )

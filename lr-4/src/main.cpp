@@ -1,3 +1,4 @@
+#include "cli.h"
 #include "shared.h"
 #include "sync.h"
 #include "table.h"
@@ -7,12 +8,16 @@
 #include <array>
 #include <cstdint>
 #include <iostream>
+#include <fstream>
+#include <iomanip>
+#include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace app {
 constexpr DWORD wait_limit_ms = shared::wait_ms;
-constexpr int operations_per_worker = 100;
+
 
 void report_error(const char* operation, DWORD error) {
     char* message = nullptr;
@@ -50,27 +55,48 @@ int worker(const char* name, const char* role, const char* number) {
     }
 
     const bool reader = std::string(role) == "reader";
+    const int worker_index = (reader ? 0 : 2) + (std::string(number) == "1" ? 0 : 1);
+    auto& stats = data->stats[worker_index];
+    std::mt19937 random(data->seed + static_cast<std::uint32_t>(worker_index));
+    std::uniform_int_distribution<std::size_t> records(0, shared::record_count - 1);
     bool ok = true;
-    for (int i = 0; i < operations_per_worker && ok; ++i) {
-        std::cout << '[' << GetTickCount64() - data->start_ms << " ms] "
+    for (std::uint32_t i = 0; i < data->counts[worker_index] && ok; ++i) {
+        if (!data->quiet) std::cout << '[' << GetTickCount64() - data->start_ms << " ms] "
                   << role << ' ' << number << " PID=" << GetCurrentProcessId()
                   << " STATE=WAITING" << std::endl;
+        LARGE_INTEGER start{}, end{};
+        if (!QueryPerformanceCounter(&start)) {
+            report_error("QueryPerformanceCounter", GetLastError());
+            ok = false;
+            break;
+        }
         if (!(reader ? sync::enter_read(objects, *data) : sync::enter_write(objects, *data))) {
             ok = false;
             break;
         }
-        std::cout << '[' << GetTickCount64() - data->start_ms << " ms] "
+        if (!QueryPerformanceCounter(&end)) {
+            report_error("QueryPerformanceCounter", GetLastError());
+            if (reader) sync::leave_read(objects, *data);
+            else sync::leave_write(objects, *data);
+            ok = false;
+            break;
+        }
+        const LONGLONG elapsed = end.QuadPart - start.QuadPart;
+        stats.wait_ticks += elapsed;
+        if (elapsed > stats.max_wait_ticks) stats.max_wait_ticks = elapsed;
+        if (!data->quiet) std::cout << '[' << GetTickCount64() - data->start_ms << " ms] "
                   << role << ' ' << number << " PID=" << GetCurrentProcessId()
                   << " STATE=" << (reader ? "READING" : "WRITING") << std::endl;
         if (reader) {
-            table::read(*data);
+            table::read(*data, data->read_ms);
             ok = sync::leave_read(objects, *data);
         } else {
-            table::write(*data, static_cast<std::size_t>(i) % shared::record_count);
+            table::write(*data, records(random));
             ok = sync::leave_write(objects, *data);
         }
+        if (ok) ++stats.operations;
     }
-    std::cout << '[' << GetTickCount64() - data->start_ms << " ms] "
+    if (!data->quiet) std::cout << '[' << GetTickCount64() - data->start_ms << " ms] "
               << role << ' ' << number << " PID=" << GetCurrentProcessId()
               << " STATE=" << (ok ? "FINISHED" : "FAILED") << std::endl;
     sync::close(objects);
@@ -84,7 +110,7 @@ int worker(const char* name, const char* role, const char* number) {
     return ok ? 0 : 1;
 }
 
-int coordinator() {
+int coordinator(const cli::Options& options) {
     const std::string name = "Local\\lab4_mapping_" + std::to_string(GetCurrentProcessId());
     HANDLE mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
                                         0, sizeof(shared::Data), name.c_str());
@@ -107,6 +133,16 @@ int coordinator() {
     }
     *data = {};
     data->start_ms = GetTickCount64();
+    const auto reads = static_cast<std::uint32_t>(
+        static_cast<std::uint64_t>(options.operations) * options.read_percent / 100);
+    const auto writes = options.operations - reads;
+    data->counts[0] = (reads + 1) / 2;
+    data->counts[1] = reads / 2;
+    data->counts[2] = (writes + 1) / 2;
+    data->counts[3] = writes / 2;
+    data->read_ms = options.read_ms;
+    data->seed = options.seed;
+    data->quiet = options.quiet;
     for (auto& record : data->records) {
         record.check = shared::check_value(record.value);
     }
@@ -130,6 +166,14 @@ int coordinator() {
         }
     }
 
+    LARGE_INTEGER frequency{}, experiment_start{}, experiment_end{};
+    if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&experiment_start)) {
+        report_error("performance counter", GetLastError());
+        sync::close(objects);
+        UnmapViewOfFile(data);
+        CloseHandle(mapping);
+        return 1;
+    }
     std::vector<HANDLE> processes;
     const char* roles[] = {"reader", "reader", "writer", "writer"};
     for (int i = 0; ok && i < 4; ++i) {
@@ -154,6 +198,7 @@ int coordinator() {
                                                    processes.data(), TRUE, wait_limit_ms);
 
         if (result == WAIT_TIMEOUT) {
+            InterlockedIncrement(&data->timeouts);
             std::cerr << "experiment timed out\n";
             ok = false;
         } else if (result == WAIT_FAILED) {
@@ -195,10 +240,49 @@ int coordinator() {
 
         CloseHandle(process);
     }
+    if (!QueryPerformanceCounter(&experiment_end)) {
+        report_error("QueryPerformanceCounter", GetLastError());
+        ok = false;
+        experiment_end = experiment_start;
+    }
     const LONG violations = InterlockedCompareExchange(&data->violations, 0, 0);
     std::cout << "invariant_violations=" << violations << std::endl;
     if (violations != 0) {
         ok = false;
+    }
+    const double to_ms = 1000.0 / static_cast<double>(frequency.QuadPart);
+    const auto& r1 = data->stats[0];
+    const auto& r2 = data->stats[1];
+    const auto& w1 = data->stats[2];
+    const auto& w2 = data->stats[3];
+    const auto reader_count = r1.operations + r2.operations;
+    const auto writer_count = w1.operations + w2.operations;
+    std::ifstream existing(options.results, std::ios::binary | std::ios::ate);
+    const bool header = !existing || existing.tellg() == 0;
+    existing.close();
+    std::ofstream csv(options.results, std::ios::app);
+    if (!csv) {
+        std::cerr << "cannot open results file: " << options.results << std::endl;
+        ok = false;
+    } else {
+        if (header) csv << "experiment,operations,read_percent,read_ms,seed,total_ms,reader_done,writer_done,reader_wait_sum_ms,reader_wait_avg_ms,reader_wait_max_ms,writer_wait_sum_ms,writer_wait_avg_ms,writer_wait_max_ms,violations,timeouts,status\n";
+        csv << options.experiment << ',' << options.operations << ',' << options.read_percent << ','
+            << options.read_ms << ',' << options.seed << ',' << std::fixed << std::setprecision(6)
+            << (experiment_end.QuadPart - experiment_start.QuadPart) * to_ms << ','
+            << reader_count << ',' << writer_count << ',';
+        csv << (r1.wait_ticks + r2.wait_ticks) * to_ms << ',';
+        if (reader_count) csv << (r1.wait_ticks + r2.wait_ticks) * to_ms / reader_count;
+        csv << ',' << (r1.max_wait_ticks > r2.max_wait_ticks ? r1.max_wait_ticks : r2.max_wait_ticks) * to_ms
+            << ',' << (w1.wait_ticks + w2.wait_ticks) * to_ms << ',';
+        if (writer_count) csv << (w1.wait_ticks + w2.wait_ticks) * to_ms / writer_count;
+        csv << ',' << (w1.max_wait_ticks > w2.max_wait_ticks ? w1.max_wait_ticks : w2.max_wait_ticks) * to_ms
+            << ',' << violations << ',' << InterlockedCompareExchange(&data->timeouts, 0, 0)
+            << ',' << (ok ? "ok" : "error") << '\n';
+        csv.close();
+        if (!csv) {
+            std::cerr << "cannot write results file" << std::endl;
+            ok = false;
+        }
     }
     sync::close(objects);
     if (!UnmapViewOfFile(data)) {
@@ -211,13 +295,13 @@ int coordinator() {
 } // namespace app
 
 int main(int argc, char** argv) {
-    if (argc == 1) {
-        return app::coordinator();
-    }
-
     if (argc == 5 && std::string(argv[1]) == "--worker") {
         return app::worker(argv[2], argv[3], argv[4]);
     }
-    std::cerr << "usage: lab4 (base stage; experiment parameters not implemented yet)\n";
-    return 2;
+    try {
+        return app::coordinator(cli::parse(argc, argv));
+    } catch (const std::invalid_argument& error) {
+        std::cerr << "[ARGUMENT ERROR] " << error.what() << '\n';
+        return 2;
+    }
 }
