@@ -246,26 +246,50 @@ int coordinator(const cli::Options& options) {
         experiment_end = experiment_start;
     }
     const LONG violations = InterlockedCompareExchange(&data->violations, 0, 0);
+    const LONG max_readers = InterlockedCompareExchange(&data->max_active_readers, 0, 0);
     std::cout << "invariant_violations=" << violations << std::endl;
+    std::cout << "max_active_readers=" << max_readers << std::endl;
     if (violations != 0) {
         ok = false;
     }
     const double to_ms = 1000.0 / static_cast<double>(frequency.QuadPart);
-    const auto& r1 = data->stats[0];
-    const auto& r2 = data->stats[1];
-    const auto& w1 = data->stats[2];
-    const auto& w2 = data->stats[3];
+    const auto r1 = data->stats[0];
+    const auto r2 = data->stats[1];
+    const auto w1 = data->stats[2];
+    const auto w2 = data->stats[3];
+    const LONG timeouts = InterlockedCompareExchange(&data->timeouts, 0, 0);
+    sync::close(objects);
+    if (!UnmapViewOfFile(data)) {
+        report_error("UnmapViewOfFile", GetLastError());
+        ok = false;
+    }
+    if (!CloseHandle(mapping)) {
+        report_error("CloseHandle(mapping)", GetLastError());
+        ok = false;
+    }
     const auto reader_count = r1.operations + r2.operations;
     const auto writer_count = w1.operations + w2.operations;
-    std::ifstream existing(options.results, std::ios::binary | std::ios::ate);
-    const bool header = !existing || existing.tellg() == 0;
+    const std::string csv_header = "experiment,operations,read_percent,read_ms,seed,total_ms,reader_done,writer_done,reader_wait_sum_ms,reader_wait_avg_ms,reader_wait_max_ms,writer_wait_sum_ms,writer_wait_avg_ms,writer_wait_max_ms,max_active_readers,violations,timeouts,status";
+    std::ifstream existing(options.results);
+    std::string previous_header;
+    const bool header = !std::getline(existing, previous_header);
     existing.close();
-    std::ofstream csv(options.results, std::ios::app);
+    if (!previous_header.empty() && previous_header.back() == '\r') {
+        previous_header.pop_back();
+    }
+    if (!header && previous_header != csv_header) {
+        std::cerr << "results file has an incompatible CSV header\n";
+        ok = false;
+    }
+    std::ofstream csv;
+    if (header || previous_header == csv_header) {
+        csv.open(options.results, std::ios::app);
+    }
     if (!csv) {
         std::cerr << "cannot open results file: " << options.results << std::endl;
         ok = false;
     } else {
-        if (header) csv << "experiment,operations,read_percent,read_ms,seed,total_ms,reader_done,writer_done,reader_wait_sum_ms,reader_wait_avg_ms,reader_wait_max_ms,writer_wait_sum_ms,writer_wait_avg_ms,writer_wait_max_ms,violations,timeouts,status\n";
+        if (header) csv << csv_header << '\n';
         csv << options.experiment << ',' << options.operations << ',' << options.read_percent << ','
             << options.read_ms << ',' << options.seed << ',' << std::fixed << std::setprecision(6)
             << (experiment_end.QuadPart - experiment_start.QuadPart) * to_ms << ','
@@ -276,7 +300,7 @@ int coordinator(const cli::Options& options) {
             << ',' << (w1.wait_ticks + w2.wait_ticks) * to_ms << ',';
         if (writer_count) csv << (w1.wait_ticks + w2.wait_ticks) * to_ms / writer_count;
         csv << ',' << (w1.max_wait_ticks > w2.max_wait_ticks ? w1.max_wait_ticks : w2.max_wait_ticks) * to_ms
-            << ',' << violations << ',' << InterlockedCompareExchange(&data->timeouts, 0, 0)
+            << ',' << max_readers << ',' << violations << ',' << timeouts
             << ',' << (ok ? "ok" : "error") << '\n';
         csv.close();
         if (!csv) {
@@ -284,12 +308,6 @@ int coordinator(const cli::Options& options) {
             ok = false;
         }
     }
-    sync::close(objects);
-    if (!UnmapViewOfFile(data)) {
-        report_error("UnmapViewOfFile", GetLastError());
-        ok = false;
-    }
-    CloseHandle(mapping);
     return ok ? 0 : 1;
 }
 } // namespace app

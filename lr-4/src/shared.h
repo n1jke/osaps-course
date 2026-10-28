@@ -32,6 +32,7 @@ struct Data {
     LONG readers;
     LONG writers;
     volatile LONG active_readers;
+    volatile LONG max_active_readers;
     volatile LONG active_writers;
     volatile LONG violations;
     volatile LONG timeouts;

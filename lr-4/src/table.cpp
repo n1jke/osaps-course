@@ -3,7 +3,17 @@
 namespace table {
 
 void read(shared::Data& data, DWORD duration_ms) {
-    InterlockedIncrement(&data.active_readers);
+    const LONG readers = InterlockedIncrement(&data.active_readers);
+    LONG maximum = InterlockedCompareExchange(&data.max_active_readers, 0, 0);
+
+    while (readers > maximum) {
+        const LONG previous = InterlockedCompareExchange(&data.max_active_readers, readers, maximum);
+
+        if (previous == maximum) {
+            break;
+        }
+        maximum = previous;
+    }
 
     if (InterlockedCompareExchange(&data.active_writers, 0, 0) != 0) {
         InterlockedIncrement(&data.violations);
