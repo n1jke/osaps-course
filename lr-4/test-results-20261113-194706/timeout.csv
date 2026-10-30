@@ -1,0 +1,2 @@
+experiment,operations,read_percent,read_ms,seed,total_ms,reader_done,writer_done,reader_wait_sum_ms,reader_wait_avg_ms,reader_wait_max_ms,writer_wait_sum_ms,writer_wait_avg_ms,writer_wait_max_ms,max_active_readers,violations,timeouts,status
+timeout,100,100,1000,11864,30025.171100,58,0,0.134900,0.002326,0.004400,0.000000,,0.000000,2,0,1,error

@@ -1,0 +1,7 @@
+experiment,operations,read_percent,read_ms,seed,total_ms,reader_done,writer_done,reader_wait_sum_ms,reader_wait_avg_ms,reader_wait_max_ms,writer_wait_sum_ms,writer_wait_avg_ms,writer_wait_max_ms,max_active_readers,violations,timeouts,status
+only_write,10,0,0,11864,27.712400,0,10,0.000000,,0.000000,0.009300,0.000930,0.002500,0,0,0,ok
+only_read,10,100,1,11864,95.745300,10,0,0.064300,0.006430,0.042200,0.000000,,0.000000,2,0,0,ok
+rounding,1,50,0,11864,21.738900,0,1,0.000000,,0.000000,0.002900,0.002900,0.002900,0,0,0,ok
+only_write,10,0,0,11864,29.559000,0,10,0.000000,,0.000000,0.010500,0.001050,0.002700,0,0,0,ok
+only_read,10,100,1,11864,90.731500,10,0,0.017100,0.001710,0.003800,0.000000,,0.000000,2,0,0,ok
+rounding,1,50,0,11864,25.632300,0,1,0.000000,,0.000000,0.003000,0.003000,0.003000,0,0,0,ok

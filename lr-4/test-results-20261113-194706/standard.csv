@@ -1,0 +1,4 @@
+experiment,operations,read_percent,read_ms,seed,total_ms,reader_done,writer_done,reader_wait_sum_ms,reader_wait_avg_ms,reader_wait_max_ms,writer_wait_sum_ms,writer_wait_avg_ms,writer_wait_max_ms,max_active_readers,violations,timeouts,status
+standard,100,50,1,1000,427.054200,50,50,14.328900,0.286578,14.150400,20.844800,0.416896,12.831600,2,0,0,ok
+standard,100,50,1,1000,424.241800,50,50,19.736800,0.394736,15.629700,396.161500,7.923230,19.323700,2,0,0,ok
+standard,100,50,1,1000,425.074400,50,50,0.663100,0.013262,0.267000,24.060400,0.481208,12.217500,2,0,0,ok
