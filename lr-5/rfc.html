@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>RFC · HTTP/1.1-клиент</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#172b2a;background:#f3f6f2;line-height:1.6}*{box-sizing:border-box}body{margin:0}header{background:#163f3a;color:#fff;padding:3rem max(1.5rem,calc((100% - 1000px)/2))}header p{color:#c2ddd3}h1{font-size:clamp(2rem,5vw,3.4rem);line-height:1.1;margin:.4rem 0 1rem}main{max-width:1000px;margin:auto;padding:2rem 1.5rem 4rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1.5rem}nav a,button{border:1px solid #a9bdb3;border-radius:8px;padding:.55rem .8rem;background:white;color:#184b40;font:inherit;text-decoration:none;cursor:pointer}nav a:hover,button:hover{background:#e1f1e7}a{color:#17674f}header a{color:#d0f5dc}details{background:white;border:1px solid #d9e4da;border-radius:12px;margin:0 0 .75rem}summary{cursor:pointer;font-size:1.15rem;font-weight:700;padding:1rem 1.25rem}summary:hover{background:#edf7ef}.content{padding:0 1.25rem 1rem}li{margin:.65rem 0}code{background:#edf3ee;padding:.1rem .25rem;border-radius:4px;overflow-wrap:anywhere}pre{background:#16302d;color:#e5f7eb;padding:1rem;border-radius:8px;overflow:auto}pre code{background:none;padding:0;color:inherit;white-space:pre}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%}td,th{text-align:left;border-bottom:1px solid #dae5dc;padding:.65rem}button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #e9aa43;outline-offset:3px}.actions{display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap}.tag{font-size:.85rem;letter-spacing:.08em;text-transform:uppercase} @media print{nav,.actions{display:none}details{break-inside:avoid}}
+.exchange{background:#fff;border:1px solid #d9e4da;border-radius:12px;padding:1.25rem;margin-bottom:1.5rem}.exchange h2{margin-top:0}.exchange-controls{display:flex;gap:.5rem;flex-wrap:wrap}.exchange button[aria-pressed="true"]{background:#163f3a;color:#fff}.step-indicator{color:#506c61;font-size:.9rem;margin-bottom:.25rem}.step-card{background:#edf7ef;border-radius:10px;padding:1rem;margin:1rem 0;min-height:12rem}.step-card h3{margin:.2rem 0}.step-card pre{white-space:pre-wrap;overflow-wrap:anywhere}.exchange button:disabled{opacity:.45;cursor:default}
+</style></head><body><header><div class="tag">Лабораторная № 5 · вариант 26</div><h1>HTTP/1.1-клиент</h1><p>RFC · черновик на обсуждении</p><a href="rfc.md">Открыть исходный RFC в Markdown →</a></header><main>
+<nav aria-label="Разделы RFC"><a href="#exchange">Как происходит обмен</a><a href="#section-1">Цель</a><a href="#section-2">Интерфейс</a><a href="#section-3">Алгоритм</a><a href="#section-4">WinAPI</a><a href="#section-5">Модули</a><a href="#section-6">Проверка и измерения</a><a href="#section-7">Решения</a></nav>
+<section class="exchange" id="exchange" aria-labelledby="exchange-title">
+<h2 id="exchange-title">Как клиент и сервер обмениваются данными</h2>
+<p>Выбери сценарий и пройди его по шагам. Это схема планируемого клиента и работы тестового сервера.</p>
+<div class="exchange-controls" role="group" aria-label="Сценарий"><button type="button" data-scenario="get" aria-pressed="true">GET /small</button><button type="button" data-scenario="head" aria-pressed="false">HEAD /small</button><button type="button" data-scenario="error" aria-pressed="false">Сервер выключен</button></div>
+<div class="step-card" aria-live="polite"><p class="step-indicator" id="step-count"></p><h3 id="step-title"></h3><p id="step-text"></p><pre id="step-code" hidden></pre></div>
+<div class="exchange-controls"><button type="button" id="previous-step">← Назад</button><button type="button" id="next-step">Дальше →</button></div>
+</section>
+<div class="actions"><button type="button" id="expand">Раскрыть всё</button><button type="button" id="collapse">Свернуть всё</button></div>
+<details id="section-1" open><summary>Цель и границы</summary><div class="content">
+<p>Windows-клиент отправляет <code>GET</code> и <code>HEAD</code> по TCP, разбирает HTTP-ответ и выводит статус, заголовки и размер полученного тела. Клиент пишем на C++17 с Winsock, собираем через CMake. Для проверок запускаем отдельный Go-сервер с <code>net/http</code>. <a href="readme.md">Задание</a> · <a href="https://pkg.go.dev/net/http">Документация Go</a></p>
+<p>Клиент принимает числовой IPv4 и открывает новое соединение для каждого запроса. В MVP только HTTP/1.1 без HTTPS, DNS, перенаправлений и распаковки содержимого.</p>
+</div></details>
+<details id="section-2" open><summary>Интерфейс и ход работы</summary><div class="content">
+<p>Команды из каталога <code>lr-5</code> для двух терминалов.</p>
+<pre><code>go run ./server/main.go [-host &lt;ipv4&gt;] [-port &lt;port&gt;]
+http_client.exe GET|HEAD &lt;path&gt; [--host &lt;ipv4&gt;] [--port &lt;port&gt;]
+                              [--timeout-ms &lt;ms&gt;] [--count &lt;n&gt;] [--csv &lt;path&gt;]</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Параметр</th><th>Клиент</th><th>Сервер</th><th>Допустимые значения</th></tr></thead><tbody><tr><td>Адрес</td><td><code>--host</code>, по умолчанию <code>127.0.0.1</code></td><td><code>-host</code>, по умолчанию <code>127.0.0.1</code></td><td>Числовой IPv4</td></tr>
+<tr><td>Порт</td><td><code>--port</code>, по умолчанию <code>20112</code></td><td><code>-port</code>, по умолчанию <code>20112</code></td><td>20000–29999. По умолчанию <code>20000 + STUDENT_ID</code>, где <code>STUDENT_ID = 112</code></td></tr>
+<tr><td>Тайм-аут</td><td><code>--timeout-ms</code>, по умолчанию 3000 мс на попытку</td><td>5 с на заголовки, 10 с на чтение, запись и простой</td><td>Клиент — 1–60000 мс. На сервере значения заданы в коде</td></tr>
+<tr><td>Число запросов</td><td><code>--count</code>, по умолчанию 1</td><td>Принимает запросы до остановки</td><td>Клиент — 1–10000</td></tr>
+<tr><td>Метод и путь</td><td>Обязательные, например <code>GET /small</code></td><td>Определяет ответ по методу и пути</td><td><code>GET</code> или <code>HEAD</code>. Путь начинается с <code>/</code>, до 2048 печатных ASCII-байтов, без пробелов и <code>#</code></td></tr>
+<tr><td>CSV</td><td><code>--csv &lt;path&gt;</code>, по умолчанию выключен</td><td>—</td><td>Путь к файлу результатов</td></tr></tbody></table></div>
+<pre class="mermaid"><code>flowchart TD
+    A[&quot;Запустить сервер: make run-server&quot;] --&gt; B[&quot;Запустить клиент: http_client.exe GET /small&quot;]
+    B --&gt; C{&quot;Аргументы верны?&quot;}
+    C --&gt;|Нет| E2[&quot;Выход 2&quot;]
+    C --&gt;|Да| D[&quot;Сформировать запрос и открыть TCP-соединение&quot;]
+    D --&gt; F[&quot;Клиент отправляет запрос&quot;]
+    F --&gt; G[&quot;Сервер читает запрос и отправляет ответ&quot;]
+    G --&gt; H[&quot;Клиент читает заголовки и, если есть, тело&quot;]
+    D &amp; F &amp; H -. &quot;Ошибка или тайм-аут&quot; .-&gt; I[&quot;Записать ошибку попытки&quot;]
+    H --&gt; J[&quot;Записать статус и размер тела. При одиночном GET показать до 256 байтов с экранированием&quot;]
+    I &amp; J --&gt; K[&quot;Закрыть сокет&quot;]
+    K --&gt; L{&quot;Остались попытки?&quot;}
+    L --&gt;|Да| D
+    L --&gt;|Нет| M{&quot;Все ответы разобраны и CSV записан, если запрошен?&quot;}
+    M --&gt;|Да, включая HTTP 404| E0[&quot;Выход 0&quot;]
+    M --&gt;|Нет| E1[&quot;Выход 1&quot;]</code></pre>
+</div></details>
+<details id="section-3" open><summary>HTTP-запрос и ответ</summary><div class="content">
+<p>HTTP/1.1 задаёт конец строки как <code>CRLF</code> (<code>\r\n</code>). После последнего заголовка отправляем пустую строку, поэтому запрос заканчивается на <code>\r\n\r\n</code>. Получателю разрешено принимать одиночный <code>\n</code> как послабление при разборе. Мы отправляем стандартный разделитель. <a href="https://www.rfc-editor.org/rfc/rfc9112.html#section-2.1">RFC 9112, § 2.1–2.2</a></p>
+<pre><code>GET /small HTTP/1.1
+Host: 127.0.0.1:20112
+Connection: close</code></pre>
+<p>Клиент повторяет <code>send</code>, пока запрос не отправлен целиком. На приёме ищет <code>CRLFCRLF</code> даже на стыке двух чтений, разбирает статус и заголовки. Имена заголовков сравнивает без учёта регистра. Часть тела из того же буфера сразу учитывает. <a href="https://www.rfc-editor.org/rfc/rfc9112.html#section-2">RFC 9112, § 2–3</a></p>
+<ul>
+<li><code>HEAD</code>, <code>204</code> и <code>304</code> заканчиваются на заголовках. У <code>HEAD</code> поле <code>Content-Length</code> может содержать размер тела для соответствующего <code>GET</code>.</li>
+<li>Если ответ содержит тело и задан <code>Content-Length</code>, читаем ровно столько байтов. Допускаем одно десятичное значение без знака и переполнения. Закрытие раньше указанной длины — ошибка.</li>
+<li>Для ответа с телом отклоняем <code>Transfer-Encoding</code> (включая <code>chunked</code>) и <code>Content-Encoding</code>, отличный от <code>identity</code>. Если длина и <code>Transfer-Encoding</code> отсутствуют, читаем до штатного EOF. При таком способе сам EOF не подтверждает полноту тела. Ответы <code>1xx</code> вне поднабора. <a href="https://www.rfc-editor.org/rfc/rfc9112.html#section-6.3">RFC 9112, § 6.3</a></li>
+</ul>
+<p>Лимиты клиента — 32 КиБ на строку статуса с заголовками и 16 МиБ на тело. Тело читаем через буфер 8 КиБ и считаем байты без хранения всего ответа.</p>
+<p>Сервер отдаёт <code>200</code> для <code>/small</code> (1 КиБ), <code>/large</code> (1 МиБ) и <code>/empty</code> (0 байтов). Неизвестный путь даёт <code>404</code>, другой метод — <code>405</code> с <code>Allow: GET, HEAD</code>. Для <code>GET</code> сервер задаёт <code>Content-Length</code> и отправляет тело, для <code>HEAD</code> оставляет статус и заголовки. На <code>/slow</code> сервер ждёт секунду перед ответом.</p>
+</div></details>
+<details id="section-4" open><summary>Winsock, журнал и завершение</summary><div class="content">
+<p><code>WSAStartup</code> запускает Winsock 2.2. Клиент использует <code>InetPtonA</code> и <code>htons</code> для адреса и порта, создаёт TCP-сокет IPv4 и включает неблокирующий режим через <code>ioctlsocket(FIONBIO)</code>. При отложенном <code>connect</code> ждёт через <code>select</code> и проверяет <code>SO_ERROR</code>. При <code>WSAEWOULDBLOCK</code> на чтении или записи снова ждёт готовности. Все ожидания используют остаток одного тайм-аута на попытку. <a href="https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-connect">Microsoft Learn — connect</a> · <a href="https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-select">Microsoft Learn — select</a></p>
+<p>При сетевой ошибке выводим функцию, код и описание. <code>WSAGetLastError</code> читаем сразу, у <code>WSAStartup</code> код берём из результата, у отложенного подключения — из <code>SO_ERROR</code>. Тайм-ауты и ошибки HTTP показываем отдельно. Каждый сокет закрываем через <code>closesocket</code>, затем вызываем <code>WSACleanup</code>. В CMake линкуем клиент с <code>ws2_32</code>. В MSVC это импортная библиотека <code>Ws2_32.lib</code> из Windows SDK. При запуске функции Winsock предоставляет системная <code>Ws2_32.dll</code>. Клиент напрямую вызывает Winsock для сети и WinAPI для таймера, а для аргументов, разбора HTTP и CSV использует стандартную библиотеку C++. Сервер использует Go <code>net/http</code>. <a href="https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsastartup">Microsoft Learn — WSAStartup</a></p>
+<p>Клиент выводит время, роль, PID, адрес и порт сервера, операцию, номер попытки и результат. Go-сервер пишет через <code>slog</code> номер запроса, адрес клиента, метод, путь и статус. Сервер обслуживает клиентов одновременно. По Ctrl+C прекращает приём новых соединений и даёт активным запросам до пяти секунд на завершение.</p>
+</div></details>
+<details id="section-5" open><summary>Структура</summary><div class="content">
+<ul>
+<li><code>src/main.cpp</code> — аргументы и цикл запросов.</li>
+<li><code>src/socket_io.h/.cpp</code> — Winsock, ожидание, отправка и приём.</li>
+<li><code>src/http.h/.cpp</code> — запрос, разбор ответа и подсчёт байтов тела.</li>
+<li><code>src/results.h/.cpp</code> — журнал, измерения и CSV.</li>
+<li><code>server/main.go</code> — локальный сервер. <code>CMakeLists.txt</code> и <code>USAGE.md</code> — сборка клиента и команды для Windows.</li>
+</ul>
+</div></details>
+<details id="section-6" open><summary>Проверки и измерения</summary><div class="content">
+<p>На Windows проверяем <code>GET</code> для <code>/small</code>, <code>/large</code>, <code>/empty</code> и неизвестного пути, <code>HEAD</code> для <code>/small</code> и неизвестного пути. Отдельно запускаем клиент без сервера, проверяем <code>/slow</code> с тайм-аутом 200 мс, три одновременных клиента и остановку сервера.</p>
+<p>На <code>/large</code> тело приходит за несколько чтений. В разборщик отдельно подаём фрагменты с разрывом внутри <code>CRLFCRLF</code> и началом тела в том же фрагменте, где заканчиваются заголовки. Проверяем неверную длину, ранний EOF, <code>chunked</code> и превышение лимитов.</p>
+<p>Для <code>GET</code> и <code>HEAD</code> сравниваем ответы <code>200</code> и <code>404</code> и ресурсы разного размера. На каждую конфигурацию делаем минимум три запуска с одинаковым числом запросов. Тайм-ауты и другие ошибки проверяем отдельно.</p>
+<p><code>QueryPerformanceCounter</code> и <code>QueryPerformanceFrequency</code> измеряют подключение от вызова <code>connect</code> до результата и всю попытку от создания сокета до проверки ответа или ошибки. Закрытие сокета, вывод и запись CSV происходят после замера. Время попытки включает работу сервера на loopback.</p>
+<p>В CSV одна строка на попытку. Поля — <code>run_id</code>, номер, адрес, порт, метод, путь, статус HTTP, исход, стадия ошибки, время подключения и попытки в мс, байты отправленного и принятого HTTP и байты тела. Полноту запроса и ответа отмечаем отдельно. Отсутствующие статус и время оставляем пустыми.</p>
+<p>По CSV считаем запросы, полные ответы, успешные операции, ошибки, тайм-ауты, среднее время и объём обмена. Скорость получения тела — сумма байтов завершённых <code>GET</code>, делённая на сумму времени этих попыток. Строим два графика по размерам ресурсов для <code>GET</code> и <code>HEAD</code> — время попытки и объём принятых HTTP-байтов. В объём входят HTTP-заголовки и тело.</p>
+</div></details>
+<details id="section-7" open><summary>Решения</summary><div class="content">
+<p>Вариант 26 реализуем как клиент на C++ с Winsock. Вторую роль на локальном стенде выполняет Go-сервер с фиксированными ответами для проверок и замеров. Для сервера из каталога <code>lr-5</code> доступны <code>make server</code> (сборка) и <code>make run-server</code> (запуск). <a href="readme.md">Задание</a></p>
+</div></details>
+</main><script>
+const scenarios = {
+  get: [
+    {title: 'Сервер ожидает подключение', text: 'Go-сервер открывает 127.0.0.1:20112. net/http принимает входящие соединения и передаёт запрос обработчику.'},
+    {title: 'Клиент формирует HTTP-запрос', text: 'Строки заканчиваются CRLF. Пустая строка завершает заголовки, тела запроса нет.', code: 'GET /small HTTP/1.1\r\nHost: 127.0.0.1:20112\r\nConnection: close\r\n\r\n'},
+    {title: 'Клиент открывает TCP-соединение', text: 'Клиент запускает Winsock, создаёт сокет и вызывает connect. При неблокирующем подключении он ждёт готовности через select и проверяет SO_ERROR.'},
+    {title: 'Клиент отправляет запрос', text: 'send может передать только часть байтов. Клиент повторяет отправку оставшейся части и следит за общим тайм-аутом.'},
+    {title: 'Сервер обрабатывает запрос', text: 'net/http читает и разбирает HTTP-запрос. Обработчик видит GET и путь /small, выбирает ответ размером 1024 байта и статус 200.'},
+    {title: 'Сервер отправляет ответ', text: 'Обработчик задаёт Content-Length и записывает тело. net/http формирует HTTP-ответ.', code: 'HTTP/1.1 200 OK\r\nContent-Length: 1024\r\nContent-Type: text/plain; charset=utf-8\r\n...\r\n\r\n[1024 байта тела]'},
+    {title: 'Клиент принимает ответ', text: 'recv вызывается повторно. Клиент ищет конец заголовков через границы буферов, читает статус и Content-Length, затем получает ровно 1024 байта тела.'},
+    {title: 'Соединение закрывается', text: 'Клиент фиксирует результат и закрывает сокет. Connection: close указывает серверу закрыть соединение после ответа.'}
+  ],
+  head: [
+    {title: 'Запрос HEAD', text: 'Клиент формирует запрос с методом HEAD.', code: 'HEAD /small HTTP/1.1\r\nHost: 127.0.0.1:20112\r\nConnection: close\r\n\r\n'},
+    {title: 'Подключение', text: 'Сервер слушает 127.0.0.1:20112. Клиент создаёт TCP-сокет и устанавливает соединение.'},
+    {title: 'Отправка и обработка', text: 'Клиент отправляет запрос целиком. net/http разбирает запрос. Обработчик выбирает статус 200 и длину ресурса 1024 байта, но для HEAD не записывает тело.'},
+    {title: 'Ответ и завершение', text: 'Клиент разбирает заголовки и завершает ответ на пустой строке. Content-Length описывает размер ресурса, поэтому ждать 1024 байта тела не нужно.', code: 'HTTP/1.1 200 OK\r\nContent-Length: 1024\r\n...\r\n\r\n[тела нет]'}
+  ],
+  error: [
+    {title: 'Клиент пытается подключиться', text: 'На 127.0.0.1:20112 сервер не слушает. Клиент запускает Winsock, создаёт сокет и вызывает connect.'},
+    {title: 'Отказ подключения', text: 'Клиент получает ошибку подключения. Если connect завершался асинхронно, результат проверяется через getsockopt(SO_ERROR). При отсутствии ответа действует общий тайм-аут.'},
+    {title: 'Диагностика и очистка', text: 'Клиент выводит операцию и код ошибки, закрывает сокет и завершает использование Winsock. HTTP-запрос в этом сценарии не отправлен.'}
+  ]
+};
+let currentScenario = 'get';
+let currentStep = 0;
+function renderStep() {
+  const steps = scenarios[currentScenario];
+  const step = steps[currentStep];
+  document.getElementById('step-count').textContent = `Шаг ${currentStep + 1} из ${steps.length}`;
+  document.getElementById('step-title').textContent = step.title;
+  document.getElementById('step-text').textContent = step.text;
+  const code = document.getElementById('step-code');
+  code.hidden = !step.code;
+  code.textContent = step.code || '';
+  document.getElementById('previous-step').disabled = currentStep === 0;
+  document.getElementById('next-step').disabled = currentStep === steps.length - 1;
+  document.querySelectorAll('[data-scenario]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.scenario === currentScenario)));
+}
+document.querySelectorAll('[data-scenario]').forEach(button => button.addEventListener('click', () => { currentScenario = button.dataset.scenario; currentStep = 0; renderStep(); }));
+document.getElementById('previous-step').addEventListener('click', () => { if (currentStep > 0) { currentStep--; renderStep(); } });
+document.getElementById('next-step').addEventListener('click', () => { if (currentStep < scenarios[currentScenario].length - 1) { currentStep++; renderStep(); } });
+renderStep();
+const sections = document.querySelectorAll('details');
+document.getElementById('expand').addEventListener('click', () => sections.forEach(section => section.open = true));
+document.getElementById('collapse').addEventListener('click', () => sections.forEach(section => section.open = false));
+document.querySelectorAll('nav a').forEach(link => link.addEventListener('click', () => { const section = document.querySelector(link.getAttribute('href')); if (section) section.open = true; }));
+</script>
+<script type="module">
+const flowchart = document.querySelector('pre.mermaid');
+import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+  .then(async ({ default: mermaid }) => {
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
+    const { svg } = await mermaid.render('request-flowchart', flowchart.textContent);
+    const diagram = document.createElement('div');
+    diagram.className = 'table-wrap';
+    diagram.innerHTML = svg;
+    flowchart.replaceWith(diagram);
+  })
+  .catch(() => {});
+</script></body></html>
