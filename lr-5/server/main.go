@@ -127,6 +127,8 @@ func newHandler() http.Handler {
 			case "/large":
 				body = large
 			case "/empty":
+			case "/chunked":
+				body = small
 			case "/slow":
 				select {
 				case <-time.After(time.Second):
@@ -142,7 +144,11 @@ func newHandler() http.Handler {
 		}
 
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if r.Method == http.MethodGet && r.URL.Path == "/chunked" {
+			w.Header().Set("Transfer-Encoding", "chunked")
+		} else {
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		}
 		w.WriteHeader(status)
 		if r.Method != http.MethodHead {
 			if _, err := io.WriteString(w, body); err != nil {
