@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="485" viewBox="0 0 720 485" role="img" aria-labelledby="title">
+  <title id="title">Последовательность обмена HTTP-клиента и Go-сервера</title>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#202020"/>
+    </marker>
+  </defs>
+  <rect width="720" height="485" fill="white"/>
+  <g fill="#f4f4f4" stroke="#333">
+    <rect x="38" y="12" width="172" height="34" rx="3"/>
+    <rect x="510" y="12" width="172" height="34" rx="3"/>
+  </g>
+  <g fill="none" stroke="#666" stroke-dasharray="5 4">
+    <path d="M124 46 V466"/>
+    <path d="M596 46 V466"/>
+  </g>
+  <g fill="none" stroke="#333">
+    <rect x="14" y="145" width="692" height="325"/>
+    <path d="M14 168 H59 L72 145 M14 379 H706" stroke-dasharray="4 3"/>
+  </g>
+  <g fill="none" stroke="#202020" marker-end="url(#arrow)">
+    <path d="M596 69 H652 V82 H596"/>
+    <path d="M124 121 H596"/>
+    <path d="M596 196 H124" stroke-dasharray="5 3"/>
+    <path d="M124 230 H596"/>
+    <path d="M596 252 H652 V266 H596"/>
+    <path d="M596 299 H124" stroke-dasharray="5 3"/>
+    <path d="M124 322 H166 V337 H124"/>
+    <path d="M124 351 H166 V365 H124"/>
+    <path d="M124 414 H166 V430 H124"/>
+  </g>
+  <g font-family="Arial, sans-serif" font-size="16" fill="#202020">
+    <g text-anchor="middle">
+      <text x="124" y="34">Клиент Winsock</text>
+      <text x="596" y="34">Go-сервер</text>
+      <text x="480" y="76">Сервер начинает слушать порт</text>
+      <text x="360" y="115">Клиент открывает TCP-соединение</text>
+      <text x="360" y="191">Соединение установлено</text>
+      <text x="360" y="224">GET /small или HEAD /small</text>
+      <text x="399" y="260">Разбор запроса, выбор ответа</text>
+      <text x="360" y="293">Статус, заголовки, тело для GET</text>
+    </g>
+    <text x="22" y="162" font-weight="bold">alt</text>
+    <text x="85" y="162">[подключение успешно]</text>
+    <text x="178" y="334">Разобрать ответ и записать результат</text>
+    <text x="178" y="363">Закрыть сокет</text>
+    <text x="22" y="400">[отказ, тайм-аут или ошибка обмена]</text>
+    <text x="178" y="425">Записать ошибку, закрыть сокет</text>
+  </g>
+</svg>

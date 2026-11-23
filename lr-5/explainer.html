@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ЛР №5 — как работает HTTP-клиент</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#182821;background:#f4f7f3;line-height:1.6;font-size:16px;scroll-behavior:smooth}*{box-sizing:border-box}body{margin:0}header{background:#123c32;color:#fff;padding:3rem 1.5rem}header>div,main{max-width:1100px;margin:auto}.eyebrow{color:#aedaca;font-weight:700;font-size:.9rem;letter-spacing:.06em}h1{font-size:clamp(2.2rem,5vw,3.6rem);line-height:1.12;max-width:18ch;margin:.5rem 0 1rem}header p{max-width:60ch;color:#d2e7de;margin:0}main{padding:1.5rem 1.25rem 4rem}nav,.controls,.switcher{display:flex;gap:.65rem;flex-wrap:wrap}nav{margin-bottom:2rem}a{color:#12624a}nav a,button{border:1px solid #b6c9bb;color:#173f32;background:#fff;border-radius:8px;padding:.62rem .9rem;font:inherit;text-decoration:none;cursor:pointer}button:hover,nav a:hover{background:#e7f4e9}button:focus-visible,a:focus-visible,summary:focus-visible,select:focus-visible{outline:3px solid #c76f20;outline-offset:3px}button[aria-pressed=true]{background:#175542;border-color:#175542;color:#fff}button:disabled{opacity:.4;cursor:default}section{scroll-margin-top:1rem;margin:0 0 3rem}h2{font-size:1.8rem;line-height:1.2;margin:0 0 .6rem}h3{margin:.25rem 0 .65rem;font-size:1.25rem}.intro{max-width:70ch;color:#485d51}.panel{border:1px solid #d7e4d8;background:white;border-radius:14px;padding:1.25rem;margin-top:1rem}.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1rem 0}.lane{padding:1rem;border:1px solid #d7e4d8;border-radius:10px;background:#f8faf8;min-height:11rem}.lane.active{border-color:#21845e;background:#eaf7ed;box-shadow:inset 4px 0 #21845e}.lane.server.active{border-color:#bf7632;background:#fff6e9;box-shadow:inset 4px 0 #bf7632}.lane h3{font-size:1rem;letter-spacing:.03em;text-transform:uppercase}.lane p{margin:.3rem 0}.step-meta{color:#496655;font-size:.95rem}.step-detail{min-height:8.5rem}.step-title{margin:.3rem 0}.explain{margin:.2rem 0 1rem}.code{white-space:pre-wrap;overflow-wrap:anywhere;background:#17352d;color:#ecf9ef;padding:1rem;border-radius:8px;margin:0 0 1rem;line-height:1.45}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.9em}p code,li code,td code{background:#e9f0ea;padding:.1rem .25rem;border-radius:4px}a code{color:inherit}.hint{font-size:.94rem;color:#526c5c}.steps{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:1rem}.steps button{min-width:2.3rem;padding:.3rem .55rem}details{border:1px solid #d7e4d8;background:#fff;border-radius:10px;margin:.6rem 0}summary{cursor:pointer;padding:.95rem 1.1rem;font-weight:700;font-size:1.05rem}summary:hover{background:#edf6ee}.rfc-body{padding:0 1.1rem 1.2rem}.rfc-body pre{overflow:auto;background:#17352d;color:#ecf9ef;padding:1rem;border-radius:8px;line-height:1.4}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;min-width:680px}th,td{text-align:left;vertical-align:top;padding:.7rem;border-bottom:1px solid #e0e8e1}th{background:#f1f7f1}.source{margin-top:1rem}.sources a{margin-right:1rem}.switcher{margin:1rem 0}footer{color:#526c5c;margin-top:2rem}@media(max-width:650px){.grid{grid-template-columns:1fr}.lane{min-height:auto}.step-detail{min-height:auto}header{padding:2.3rem 1.25rem}}@media(prefers-reduced-motion:reduce){:root{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<header><div><div class="eyebrow">ОСАСП · лабораторная №5 · вариант 26</div><h1>Как работает наш HTTP-клиент</h1><p>Пошаговая схема обмена между клиентом на Winsock и локальным сервером на Go, с примерами запросов и пояснениями к коду.</p></div></header>
+<main>
+<nav aria-label="Навигация"><a href="#exchange">Обмен</a><a href="#internals">Клиент и сервер</a><a href="#rfc">RFC</a></nav>
+<section id="exchange">
+<h2>Один запрос от начала до конца</h2>
+<p class="intro">Выбери сценарий и переходи по шагам. Подсветка показывает, какая сторона выполняет действие.</p>
+<div class="panel">
+<div class="switcher" role="group" aria-label="Сценарий обмена">
+<button type="button" data-case="get" aria-pressed="true">GET /small</button>
+<button type="button" data-case="head" aria-pressed="false">HEAD /small</button>
+<button type="button" data-case="missing" aria-pressed="false">GET /missing</button>
+<button type="button" data-case="chunked" aria-pressed="false">GET /chunked</button>
+<button type="button" data-case="timeout" aria-pressed="false">Тайм-аут</button>
+<button type="button" data-case="offline" aria-pressed="false">Сервер выключен</button>
+</div>
+<div class="grid" aria-label="Участники обмена">
+<div class="lane client" id="client-lane"><h3>Клиент · C++</h3><p id="client-state"></p></div>
+<div class="lane server" id="server-lane"><h3>Сервер · Go</h3><p id="server-state"></p></div>
+</div>
+<div class="step-detail" aria-live="polite"><div class="step-meta" id="step-count"></div><h3 class="step-title" id="step-title"></h3><p class="explain" id="step-text"></p><pre class="code" id="step-code" hidden></pre><p class="source" id="step-source"></p></div>
+<div class="controls"><button id="prev" type="button">Назад</button><button id="next" type="button">Дальше</button></div>
+<div class="steps" id="step-buttons" aria-label="Выбор шага"></div>
+</div>
+</section>
+<section id="internals"><h2>Внутри программ</h2><p class="intro">Два отдельных процесса работают параллельно. Выбери сторону, чтобы разобрать её жизненный цикл.</p>
+<div class="panel"><div class="switcher" role="group" aria-label="Сторона"><button type="button" data-side="client" aria-pressed="true">Клиент</button><button type="button" data-side="server" aria-pressed="false">Сервер</button></div>
+<ol id="internals-list"></ol><p class="hint" id="internals-note"></p></div>
+</section>
+<section id="rfc"><h2>RFC</h2><p class="intro">Текущая версия проекта с параметрами, границами и планом замеров. Исходный документ — <a href="rfc.md">rfc.md</a>.</p>
+<details><summary>Цель и границы</summary><div class="rfc-body"><p>Windows-клиент отправляет <code>GET</code> и <code>HEAD</code> по TCP, разбирает HTTP-ответ и выводит статус, заголовки и размер полученного тела. Клиент пишем на C++17 с Winsock, собираем через CMake. Для проверок запускаем отдельный Go-сервер с <code>net/http</code>.</p>
+<p>Клиент принимает числовой IPv4 и открывает новое соединение для каждого запроса. В MVP только HTTP/1.1 без HTTPS, DNS, перенаправлений и т.п.</p></div></details>
+<details><summary>Интерфейс и ход работы</summary><div class="rfc-body"><pre><code>cd lr-5
+
+# start go server
+go run ./server/main.go [-host &lt;ipv4&gt;] [-port &lt;port&gt;]
+
+# start cpp client
+http_client.exe GET|HEAD &lt;path&gt; [--host &lt;ipv4&gt;] [--port &lt;port&gt;]
+                              [--timeout-ms &lt;ms&gt;] [--count &lt;n&gt;] [--csv &lt;path&gt;]</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Параметр</th><th>Клиент</th><th>Сервер</th><th>Допустимые значения</th></tr></thead><tbody><tr><td>Адрес</td><td><code>--host</code>, по умолчанию <code>127.0.0.1</code></td><td><code>-host</code>, по умолчанию <code>127.0.0.1</code></td><td>Числовой IPv4</td></tr><tr><td>Порт</td><td><code>--port</code>, по умолчанию <code>20112</code></td><td><code>-port</code>, по умолчанию <code>20112</code></td><td>20000–29999. По умолчанию <code>20000 + STUDENT_ID</code>, где <code>STUDENT_ID = 112</code></td></tr><tr><td>Тайм-аут</td><td><code>--timeout-ms</code>, по умолчанию 3000 мс на попытку</td><td>5 с на заголовки, 10 с на чтение, запись и простой</td><td>Клиент — 1–60000 мс. На сервере значения заданы в коде</td></tr><tr><td>Число запросов</td><td><code>--count</code>, по умолчанию 1</td><td>Принимает запросы до остановки</td><td>Клиент — 1–10000</td></tr><tr><td>Метод и путь</td><td>Обязательные, например <code>GET /small</code></td><td>Определяет ответ по методу и пути</td><td><code>GET</code> или <code>HEAD</code>. Путь начинается с <code>/</code>, до 2048 печатных ASCII-байтов, без пробелов и <code>#</code></td></tr><tr><td>CSV</td><td><code>--csv &lt;path&gt;</code>, по умолчанию выключен</td><td>—</td><td>Путь к файлу результатов</td></tr></tbody></table></div>
+<pre><code>flowchart TD
+    A[&quot;Запустить сервер: make run-server&quot;] --&gt; B[&quot;Запустить клиент: http_client.exe GET /small&quot;]
+    B --&gt; C{&quot;Аргументы верны?&quot;}
+    C --&gt;|Нет| E2[&quot;Выход 2&quot;]
+    C --&gt;|Да| D[&quot;Сформировать запрос и открыть TCP-соединение&quot;]
+    D --&gt; F[&quot;Клиент отправляет запрос&quot;]
+    F --&gt; G[&quot;Сервер читает запрос и отправляет ответ&quot;]
+    G --&gt; H[&quot;Клиент читает заголовки и, если есть, тело&quot;]
+    D &amp; F &amp; H -. &quot;Ошибка или тайм-аут&quot; .-&gt; I[&quot;Записать ошибку попытки&quot;]
+    H --&gt; J[&quot;Записать статус и размер тела. При одиночном GET показать до 256 байтов с экранированием&quot;]
+    I &amp; J --&gt; K[&quot;Закрыть сокет&quot;]
+    K --&gt; L{&quot;Остались попытки?&quot;}
+    L --&gt;|Да| D
+    L --&gt;|Нет| M{&quot;Все ответы разобраны и CSV записан, если запрошен?&quot;}
+    M --&gt;|Да, включая HTTP 404| E0[&quot;Выход 0&quot;]
+    M --&gt;|Нет| E1[&quot;Выход 1&quot;]</code></pre></div></details>
+<details><summary>HTTP-запрос и ответ</summary><div class="rfc-body"><p>HTTP/1.1 задаёт конец строки как <code>CRLF</code> (<code>\r\n</code>). После последнего заголовка отправляем пустую строку, поэтому запрос заканчивается на <code>\r\n\r\n</code>. Получателю разрешено принимать одиночный <code>\n</code> как послабление при разборе. Мы отправляем стандартный разделитель. <a href="https://www.rfc-editor.org/rfc/rfc9112.html#section-2.1">RFC 9112, § 2.1–2.2</a></p>
+<pre><code>GET /small HTTP/1.1
+Host: 127.0.0.1:20112
+Connection: close
+</code></pre>
+<p>Клиент повторяет <code>send</code>, пока запрос не отправлен целиком. На приёме ищет <code>CRLFCRLF</code> даже на стыке двух чтений, разбирает статус и заголовки. Имена заголовков сравнивает без учёта регистра. Часть тела из того же буфера сразу учитывает. <a href="https://www.rfc-editor.org/rfc/rfc9112.html#section-2">RFC 9112, § 2–3</a></p>
+<ul><li><code>HEAD</code>, <code>204</code> и <code>304</code> заканчиваются на заголовках. У <code>HEAD</code> поле <code>Content-Length</code> может содержать размер тела для соответствующего <code>GET</code>.</li><li>Если ответ содержит тело и задан <code>Content-Length</code>, читаем ровно столько байтов. Допускаем одно десятичное значение без знака и переполнения. Закрытие раньше указанной длины — ошибка.</li><li>Для ответа с телом отклоняем <code>Transfer-Encoding</code> (включая <code>chunked</code>) и <code>Content-Encoding</code>, отличный от <code>identity</code>. Если длина и <code>Transfer-Encoding</code> отсутствуют, читаем до штатного EOF. При таком способе сам EOF не подтверждает полноту тела. Ответы <code>1xx</code> вне поднабора. <a href="https://www.rfc-editor.org/rfc/rfc9112.html#section-6.3">RFC 9112, § 6.3</a></li></ul>
+<p>Лимиты клиента — 32 КиБ на строку статуса с заголовками и 16 МиБ на тело. Тело читаем через буфер 8 КиБ и считаем байты без хранения всего ответа.</p>
+<p>Сервер отдаёт <code>200</code> для <code>/small</code> (1 КиБ), <code>/large</code> (1 МиБ) и <code>/empty</code> (0 байтов). Неизвестный путь даёт <code>404</code>, другой метод — <code>405</code> с <code>Allow: GET, HEAD</code>. Для <code>GET</code> сервер задаёт <code>Content-Length</code> и отправляет тело, для <code>HEAD</code> оставляет статус и заголовки. На <code>/slow</code> сервер ждёт секунду перед ответом, а <code>GET /chunked</code> возвращает тело с <code>Transfer-Encoding: chunked</code>.</p></div></details>
+<details><summary>Winsock, журнал и завершение</summary><div class="rfc-body"><p><code>WSAStartup</code> запускает Winsock 2.2. Клиент использует <code>InetPtonA</code> и <code>htons</code> для адреса и порта, создаёт TCP-сокет IPv4 и включает неблокирующий режим через <code>ioctlsocket(FIONBIO)</code>. При отложенном <code>connect</code> ждёт через <code>select</code> и проверяет <code>SO_ERROR</code>. При <code>WSAEWOULDBLOCK</code> на чтении или записи снова ждёт готовности. Все ожидания используют остаток одного тайм-аута на попытку. <a href="https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-connect">Microsoft Learn — connect</a> · <a href="https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-select">Microsoft Learn — select</a></p>
+<p>При сетевой ошибке выводим функцию, код и описание. <code>WSAGetLastError</code> читаем сразу, у <code>WSAStartup</code> код берём из результата, у отложенного подключения — из <code>SO_ERROR</code>. Тайм-ауты и ошибки HTTP показываем отдельно. Каждый сокет закрываем через <code>closesocket</code>, затем вызываем <code>WSACleanup</code>. В CMake линкуем клиент с <code>ws2_32</code>. В MSVC это импортная библиотека <code>Ws2_32.lib</code> из Windows SDK. При запуске функции Winsock предоставляет системная <code>Ws2_32.dll</code>. Клиент напрямую вызывает Winsock для сети и WinAPI для таймера, а для аргументов, разбора HTTP и CSV использует стандартную библиотеку C++. Сервер использует Go <code>net/http</code>. <a href="https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsastartup">Microsoft Learn — WSAStartup</a></p>
+<p>Клиент выводит время, роль, PID, адрес и порт сервера, операцию, номер попытки и результат. Go-сервер пишет через <code>slog</code> номер запроса, адрес клиента, метод, путь и статус. Сервер обслуживает клиентов одновременно. По Ctrl+C прекращает приём новых соединений и даёт активным запросам до пяти секунд на завершение.</p></div></details>
+<details><summary>Структура</summary><div class="rfc-body"><ul><li><code>src/main.cpp</code> — аргументы и цикл запросов.</li><li><code>src/socket_io.h/.cpp</code> — Winsock, ожидание, отправка и приём.</li><li><code>src/http.h/.cpp</code> — запрос, разбор ответа и подсчёт байтов тела.</li><li><code>src/results.h/.cpp</code> — журнал, измерения и CSV.</li><li><code>server/main.go</code> — локальный сервер. <code>CMakeLists.txt</code> и <code>USAGE.md</code> — сборка клиента и команды для Windows.</li></ul></div></details>
+<details><summary>Проверки и измерения</summary><div class="rfc-body"><p>На Windows проверяем <code>GET</code> для <code>/small</code>, <code>/large</code>, <code>/empty</code> и неизвестного пути, <code>HEAD</code> для <code>/small</code> и неизвестного пути. Отдельно запускаем клиент без сервера, проверяем <code>/slow</code> с тайм-аутом 200 мс, три одновременных клиента и остановку сервера.</p>
+<p>На <code>/large</code> тело приходит за несколько чтений. На <code>GET /chunked</code> проверяем диагностику неподдерживаемого кодирования.</p>
+<p>Для <code>GET</code> и <code>HEAD</code> сравниваем ответы <code>200</code> и <code>404</code> и ресурсы разного размера. Для каждой пары метода и пути делаем три запуска по 100 запросов и сохраняем отдельный CSV на запуск в <code>measurements/lr5/</code>. Тайм-ауты и другие ошибки проверяем отдельно. <a href="USAGE.md">Команды запуска</a></p>
+<p><code>QueryPerformanceCounter</code> и <code>QueryPerformanceFrequency</code> измеряют подключение от вызова <code>connect</code> до результата и всю попытку от создания сокета до проверки ответа или ошибки. Закрытие сокета, вывод и запись CSV происходят после замера. Время попытки включает работу сервера на loopback.</p>
+<p>В CSV одна строка на попытку. Поля — <code>run_id</code>, номер, адрес, порт, метод, путь, статус HTTP, исход, стадия ошибки, время подключения и попытки в мс, байты отправленного и принятого HTTP и байты тела. Полноту запроса и ответа отмечаем отдельно. Отсутствующие статус и время оставляем пустыми.</p>
+<p>По CSV считаем запросы, полные ответы, успешные операции, ошибки, тайм-ауты, среднее время и объём обмена. Скорость получения тела — сумма байтов завершённых <code>GET</code>, делённая на сумму времени этих попыток. Строим два графика по размерам ресурсов для <code>GET</code> и <code>HEAD</code> — время попытки и объём принятых HTTP-байтов. В объём входят HTTP-заголовки и тело.</p></div></details>
+</section>
+<footer>Страница работает локально. Для проверки команд и замеров используй <a href="USAGE.md">USAGE.md</a>.</footer>
+</main>
+<script>
+const request = method => method + ' /small HTTP/1.1\r\nHost: 127.0.0.1:20112\r\nConnection: close\r\n\r\n';
+const requestFor = (method, path) => request(method).replace('/small', path);
+const common = (method, path) => [
+ {side:'server',title:'Сервер готов к соединению',text:'Go-сервер слушает 127.0.0.1:20112. net/http принимает подключения и передаёт HTTP-запрос обработчику.',client:'Ожидает запуска.',server:'Слушает локальный порт.',source:'server/main.go'},
+ {side:'client',title:'Клиент готовит запрос',text:'Клиент проверяет аргументы, инициализирует Winsock и формирует HTTP/1.1-запрос. Символы \\r\\n ниже обозначают CRLF. Пустая строка заканчивает заголовки.',code:requestFor(method,path),client:'Создаёт текст запроса.',server:'Ожидает подключение.',source:'src/main.cpp'},
+ {side:'client',title:'Создание и подключение сокета',text:'Для попытки создаётся неблокирующий TCP-сокет. При отложенном connect клиент ждёт через select и проверяет SO_ERROR.',client:'Открывает TCP-соединение.',server:'Принимает соединение через net/http.',source:'src/socket_io.cpp'},
+ {side:'client',title:'Отправка запроса',text:'send возвращает количество отправленных байтов. Если передана только часть, клиент отправляет оставшиеся байты до конца запроса.',client:'Передаёт запрос через send.',server:'net/http читает и разбирает запрос.',source:'src/socket_io.cpp'}
+];
+const closeStep = {side:'client',title:'Результат и закрытие',text:'Клиент записывает результат попытки, закрывает сокет и при необходимости повторяет цикл на новом соединении. После завершения процесса вызывается WSACleanup.',client:'Выводит результат и освобождает сокет.',server:'Закрывает соединение после ответа.',source:'src/main.cpp'};
+function normal(method,path){
+ const missing=path==='/missing', head=method==='HEAD';
+ const status=missing?'404 Not Found':'200 OK', length=missing?10:1024;
+ const response='HTTP/1.1 '+status+'\r\nContent-Length: '+length+'\r\nContent-Type: text/plain; charset=utf-8\r\n...\r\n\r\n'+(head?'[тела нет]':'['+length+' байт тела]');
+ return [...common(method,path),
+ {side:'server',title:'Выбор ответа',text:missing?'Путь отсутствует. Обработчик выбирает 404 и тело «not found» с переводом строки, всего 10 байтов.':'Обработчик выбирает /small и тело из 1024 байтов. Он указывает Content-Length и статус 200.',client:'Ждёт ответ.',server:head?'Формирует заголовки без записи тела.':'Выбирает статус, заголовки и тело.',source:'server/main.go'},
+ {side:'server',title:'Передача ответа',text:'net/http отправляет строку статуса, заголовки и '+(head?'пустую строку. У HEAD тело не отправляется.':'тело ответа.'),code:response,client:'Получает байты через TCP.',server:'Передаёт HTTP-ответ.',source:'server/main.go'},
+ {side:'client',title:'Разбор заголовков',text:'recv может вернуть любую часть потока. Клиент накапливает заголовки до \\r\\n\\r\\n и разбирает статус. Байты после границы учитываются как начало тела, если оно есть.',client:'Ищет конец заголовков.',server:'Ответ отправлен.',source:'src/http.cpp'},
+ {side:'client',title:head?'HEAD: тело отсутствует':'GET: чтение тела',text:head?'Content-Length описывает размер тела соответствующего GET. Для HEAD клиент завершает разбор после заголовков, фактически получено 0 байтов тела.':'Клиент читает ровно '+length+' байтов тела по Content-Length. Если соединение закроется раньше, это ошибка неполного ответа.',client:head?'Завершает ответ после заголовков.':'Считает байты до Content-Length.',server:'Ответ отправлен.',source:'src/http.cpp'},
+ closeStep];
+}
+const scenarios={
+ get:normal('GET','/small'),
+ head:normal('HEAD','/small'),
+ missing:normal('GET','/missing'),
+ chunked:[...common('GET','/chunked'),
+ {side:'server',title:'Ответ с chunked',text:'Маршрут /chunked отдаёт 200 и Transfer-Encoding: chunked. net/http формирует закодированное тело.',code:'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n...\r\n\r\n[тело в chunked-формате]',client:'Читает ответ.',server:'Отправляет заголовки и тело.',source:'server/main.go'},
+ {side:'client',title:'Неподдерживаемое кодирование',text:'Клиент распознаёт Transfer-Encoding и сообщает об ошибке. Для одиночного запроса код завершения — 1.',client:'Фиксирует ошибку протокола.',server:'Обработчик завершает ответ.',source:'src/http.cpp'},closeStep],
+ timeout:[...common('GET','/slow'),
+ {side:'server',title:'Сервер задерживает ответ',text:'Обработчик /slow ждёт одну секунду. Клиент запущен с --timeout-ms 200 и ожидает ответ в пределах общего срока попытки.',client:'Ожидает готовности к чтению.',server:'Ждёт перед отправкой заголовков.',source:'server/main.go'},
+ {side:'client',title:'Истечение тайм-аута',text:'До конца допустимого времени ответ не пришёл. Клиент фиксирует тайм-аут, затем закрывает сокет. Сервер может обнаружить отмену запроса.',client:'Выводит тайм-аут, код выхода 1.',server:'Ожидает или замечает отмену запроса.',source:'src/socket_io.cpp'},closeStep],
+ offline:[
+ {side:'client',title:'Подготовка',text:'Клиент разбирает GET /small и запускает Winsock. На 127.0.0.1:20112 сервер не запущен.',client:'Готовит запрос.',server:'Порт не прослушивается.',source:'src/main.cpp'},
+ {side:'client',title:'Попытка подключения',text:'connect или последующая проверка SO_ERROR сообщает об ошибке подключения. Если результат не приходит вовремя, срабатывает тайм-аут.',client:'Открывает TCP-соединение.',server:'Не принимает подключения.',source:'src/socket_io.cpp'},
+ {side:'client',title:'Ошибка и очистка',text:'Клиент выводит операцию и код ошибки, закрывает сокет и завершает работу с кодом 1. HTTP-запрос не был отправлен.',client:'Выводит диагностику и освобождает ресурсы.',server:'Остаётся выключенным.',source:'src/main.cpp'}]
+};
+const internals={
+ client:[
+ ['Аргументы и настройки','parse проверяет метод, путь и параметры. По умолчанию — 127.0.0.1:20112, одна попытка и 3000 мс.','src/main.cpp'],
+ ['Подготовка Winsock','WSAStartup и InetPtonA подготавливают сетевой стек и числовой IPv4. Формируется текст запроса.','src/socket_io.cpp'],
+ ['Попытка','Для каждого запроса создаётся свой сокет. connect, send и recv работают с общим сроком ожидания.','src/socket_io.cpp'],
+ ['Ответ','Разборщик проверяет статус, заголовки, Content-Length и пределы. HEAD завершается после заголовков.','src/http.cpp'],
+ ['Результат и ресурсы','Счётчики и время собираются на каждую попытку, по желанию пишется CSV. Сокет закрывается, а Winsock завершается.','src/results.cpp']
+ ],
+ server:[
+ ['Конфигурация','main читает -host и -port, создаёт контекст для Ctrl+C и вызывает run.','server/main.go'],
+ ['Запуск','run проверяет IPv4 и порт, создаёт http.Server, привязывает TCP-сокет и запускает Serve.','server/main.go'],
+ ['Обработка','net/http передаёт запрос в обработчик. Он выбирает ответ по методу и пути и присваивает requestID.','server/main.go'],
+ ['Ответ','Сервер выставляет статус и Content-Length или chunked. Для HEAD тело не записывается.','server/main.go'],
+ ['Остановка','При Ctrl+C Shutdown прекращает приём соединений и ожидает активные запросы до пяти секунд.','server/main.go']
+ ]
+};
+let selected='get', index=0, side='client';
+const byId=id=>document.getElementById(id);
+function render(){
+ const steps=scenarios[selected], step=steps[index];
+ byId('step-count').textContent='Шаг '+(index+1)+' из '+steps.length;
+ byId('step-title').textContent=step.title; byId('step-text').textContent=step.text;
+ byId('client-state').textContent=step.client; byId('server-state').textContent=step.server;
+ byId('client-lane').classList.toggle('active',step.side==='client');
+ byId('server-lane').classList.toggle('active',step.side==='server');
+ const code=byId('step-code'); code.hidden=!step.code; code.textContent=step.code||'';
+ const source=byId('step-source'); source.replaceChildren();
+ const link=document.createElement('a'); link.href=step.source; link.textContent=step.source; source.append('Исходный код: ',link);
+ byId('prev').disabled=index===0; byId('next').disabled=index===steps.length-1;
+ document.querySelectorAll('[data-case]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.case===selected)));
+ const container=byId('step-buttons'); container.replaceChildren();
+ steps.forEach((_,n)=>{const b=document.createElement('button');b.type='button';b.textContent=String(n+1);b.setAttribute('aria-label','Шаг '+(n+1));b.setAttribute('aria-pressed',String(n===index));b.addEventListener('click',()=>{index=n;render()});container.append(b)});
+}
+document.querySelectorAll('[data-case]').forEach(b=>b.addEventListener('click',()=>{selected=b.dataset.case;index=0;render()}));
+byId('prev').addEventListener('click',()=>{if(index>0){index--;render()}});
+byId('next').addEventListener('click',()=>{if(index<scenarios[selected].length-1){index++;render()}});
+function renderInternals(){
+ document.querySelectorAll('[data-side]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.side===side)));
+ const list=byId('internals-list');list.replaceChildren();
+ internals[side].forEach(([title,text,path])=>{const item=document.createElement('li');const strong=document.createElement('strong');strong.textContent=title+'. ';const a=document.createElement('a');a.href=path;a.textContent=path;item.append(strong,text+' ',a);list.append(item)});
+ byId('internals-note').textContent=side==='client'?'При --count каждая попытка создаёт новое соединение.':'Несколько подключений обрабатываются net/http параллельно.';
+}
+document.querySelectorAll('[data-side]').forEach(b=>b.addEventListener('click',()=>{side=b.dataset.side;renderInternals()}));
+render();renderInternals();
+</script>
+</body>
+</html>
