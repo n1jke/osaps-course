@@ -100,7 +100,7 @@ static void write_csv(const std::filesystem::path& path, const monitor::Run& run
     }
 }
 
-void save_csv(const std::wstring& path, const monitor::Run& run, bool replace)
+void save_csv(const std::wstring& path, const monitor::Run& run)
 {
     const std::filesystem::path destination(path);
     auto directory = destination.parent_path();
@@ -113,7 +113,7 @@ void save_csv(const std::wstring& path, const monitor::Run& run, bool replace)
     }
     try {
         write_csv(temporary, run);
-        if (!MoveFileExW(temporary, path.c_str(), replace ? MOVEFILE_REPLACE_EXISTING : 0)) {
+        if (!MoveFileExW(temporary, path.c_str(), 0)) {
             throw Error{L"MoveFileEx", GetLastError()};
         }
     } catch (...) {

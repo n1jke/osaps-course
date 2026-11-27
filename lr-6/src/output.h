@@ -16,6 +16,6 @@ struct Error {
 std::wstring describe(const Error& error);
 void log(const wchar_t* operation, const std::wstring& object,
          const wchar_t* status, DWORD code = 0, const SYSTEMTIME* timestamp = nullptr);
-void save_csv(const std::wstring& path, const monitor::Run& run, bool replace = true);
+void save_csv(const std::wstring& path, const monitor::Run& run);
 
 }

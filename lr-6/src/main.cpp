@@ -1,9 +1,11 @@
 #include "monitor.h"
+#include "options.h"
 #include "output.h"
 
-#include <commdlg.h>
+#include <shellapi.h>
 
 #include <iomanip>
+#include <memory>
 #include <new>
 #include <sstream>
 #include <utility>
@@ -11,7 +13,9 @@
 
 namespace {
 
-enum Control { frequency = 100, duration, start, stop, test, save, summary };
+enum Control { start = 100, stop, test, summary };
+
+Options options;
 
 HWND child(HWND window, Control id)
 {
@@ -28,13 +32,9 @@ void set_label(HWND window, const std::wstring& text)
 void update_controls(HWND window)
 {
     const bool active = monitor::active();
-    const bool ready = monitor::can_start();
-    for (const auto id : {frequency, duration, start}) {
-        EnableWindow(child(window, id), ready);
-    }
+    EnableWindow(child(window, start), monitor::can_start());
     EnableWindow(child(window, stop), active);
     EnableWindow(child(window, test), active);
-    EnableWindow(child(window, save), !active && monitor::result().valid);
 }
 
 std::wstring run_id()
@@ -74,10 +74,10 @@ void write_events()
 
 std::wstring csv_filename()
 {
-    return L"test_" + run_id() + L".csv";
+    return options.csv.empty() ? L"test_" + run_id() + L".csv" : options.csv;
 }
 
-void save_result(const std::wstring& path, bool replace);
+void save_result(const std::wstring& path);
 
 void show_error(HWND window, const output::Error& error)
 {
@@ -114,45 +114,22 @@ void add(HWND window, const wchar_t* type, const wchar_t* caption, DWORD style,
 
 void create_controls(HWND window)
 {
-    add(window, L"STATIC", L"Частота, срабатываний/с", 0, 16, 12, 180, 20);
-    add(window, L"STATIC", L"Длительность, с", 0, 215, 12, 150, 20);
-    add(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL,
-        16, 35, 170, 130, frequency);
-    for (const auto* value : {L"10", L"50", L"100"}) {
-        if (SendMessage(child(window, frequency), CB_ADDSTRING, 0,
-                        reinterpret_cast<LPARAM>(value)) < 0) {
-            throw output::Error{L"CB_ADDSTRING", ERROR_NOT_ENOUGH_MEMORY};
-        }
-    }
-    if (SendMessage(child(window, frequency), CB_SETCURSEL, 0, 0) == CB_ERR) {
-        throw output::Error{L"CB_SETCURSEL", ERROR_INVALID_DATA};
-    }
-    add(window, L"EDIT", L"30", WS_BORDER | ES_NUMBER, 215, 35, 100, 24, duration);
-    SendMessage(child(window, duration), EM_SETLIMITTEXT, 3, 0);
-    add(window, L"BUTTON", L"Старт", 0, 16, 76, 92, 28, start);
-    add(window, L"BUTTON", L"Стоп", 0, 116, 76, 92, 28, stop);
-    add(window, L"BUTTON", L"Тест", 0, 216, 76, 92, 28, test);
-    add(window, L"BUTTON", L"Сохранить CSV", 0, 316, 76, 132, 28, save);
-    add(window, L"STATIC", L"Готово к замеру", SS_LEFT, 16, 124, 432, 115, summary);
+    const auto settings = L"Частота: " + std::to_wstring(options.hz) +
+                          L" срабатываний/с. Длительность: " +
+                          std::to_wstring(options.seconds) + L" с.";
+    add(window, L"STATIC", settings.c_str(), 0, 16, 12, 432, 24);
+    add(window, L"BUTTON", L"Старт", 0, 16, 46, 92, 28, start);
+    add(window, L"BUTTON", L"Стоп", 0, 116, 46, 92, 28, stop);
+    add(window, L"BUTTON", L"Тест", 0, 216, 46, 92, 28, test);
+    add(window, L"STATIC", L"Готово к замеру", SS_LEFT, 16, 92, 432, 130, summary);
     update_controls(window);
 }
 
 void start_run(HWND window)
 {
-    BOOL parsed = FALSE;
-    const UINT seconds = GetDlgItemInt(window, duration, &parsed, FALSE);
-    if (!parsed || seconds < 1 || seconds > monitor::max_seconds) {
-        set_label(window, L"Укажи длительность от 1 до 300 секунд.");
-        return;
-    }
-    const LRESULT index = SendMessage(child(window, frequency), CB_GETCURSEL, 0, 0);
-    if (index < 0 || index >= 3) {
-        throw output::Error{L"CB_GETCURSEL", ERROR_INVALID_DATA};
-    }
-    constexpr unsigned rates[] = {10, 50, 100};
     write_events();
     set_label(window, L"Идёт замер…");
-    monitor::start(window, rates[index], seconds);
+    monitor::start(window, options.hz, options.seconds);
     update_controls(window);
     remember(L"START", run_id(), L"ok");
 }
@@ -186,7 +163,7 @@ void stop_run(HWND window)
     remember(L"STOP", run_id(), run.completed ? L"completed" : L"stopped");
     const auto path = csv_filename();
     try {
-        save_result(path, false);
+        save_result(path);
     } catch (const output::Error& error) {
         write_events();
         throw;
@@ -195,39 +172,13 @@ void stop_run(HWND window)
     set_label(window, view.str() + L"\r\nCSV: " + path);
 }
 
-void export_run(HWND window)
-{
-    wchar_t path[4096]{};
-    const auto filename = csv_filename();
-    filename.copy(path, filename.size());
-    OPENFILENAME dialog{};
-    dialog.lStructSize = sizeof(dialog);
-    dialog.hwndOwner = window;
-    dialog.lpstrFile = path;
-    dialog.nMaxFile = sizeof(path) / sizeof(path[0]);
-    dialog.lpstrFilter = L"CSV (*.csv)\0*.csv\0";
-    dialog.lpstrDefExt = L"csv";
-    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!GetSaveFileName(&dialog)) {
-        const DWORD error = CommDlgExtendedError();
-        if (error) {
-            throw output::Error{L"GetSaveFileName", error};
-        }
-        return;
-    }
-    save_result(path, true);
-    write_events();
-    const auto message = std::wstring(L"Сохранено в ") + path;
-    MessageBox(window, message.c_str(), L"ЛР №6", MB_OK);
-}
-
-void save_result(const std::wstring& path, bool replace)
+void save_result(const std::wstring& path)
 {
     LARGE_INTEGER begin{}, end{};
     if (!QueryPerformanceCounter(&begin)) {
         throw output::Error{L"QueryPerformanceCounter", GetLastError()};
     }
-    output::save_csv(path, monitor::result(), replace);
+    output::save_csv(path, monitor::result());
     if (!QueryPerformanceCounter(&end)) {
         throw output::Error{L"QueryPerformanceCounter", GetLastError()};
     }
@@ -271,11 +222,6 @@ LRESULT CALLBACK process(HWND window, UINT message, WPARAM wp, LPARAM lp)
                             std::to_wstring(monitor::result().posted - before), L"ok");
                         set_label(window, L"Идёт замер… Тестовых сообщений отправлено: " +
                                           std::to_wstring(monitor::result().posted));
-                    }
-                    return 0;
-                case save:
-                    if (!monitor::active() && monitor::result().valid) {
-                        export_run(window);
                     }
                     return 0;
                 }
@@ -333,6 +279,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show)
 {
     HWND window = nullptr;
     try {
+        int count = 0;
+        const std::unique_ptr<wchar_t*, decltype(&LocalFree)> argv(
+            CommandLineToArgvW(GetCommandLineW(), &count), &LocalFree);
+        if (!argv) {
+            throw output::Error{L"CommandLineToArgvW", GetLastError()};
+        }
+        std::vector<std::wstring_view> arguments;
+        for (int i = 1; i < count; ++i) {
+            arguments.emplace_back(argv.get()[i]);
+        }
+        if (!parse_options(arguments, options)) {
+            const auto message = std::wstring(L"Неверные параметры запуска.\n") + usage;
+            MessageBox(nullptr, message.c_str(), L"ЛР №6", MB_OK | MB_ICONERROR);
+            return 2;
+        }
+
         WNDCLASS cls{};
         cls.lpfnWndProc = process;
         cls.hInstance = instance;
