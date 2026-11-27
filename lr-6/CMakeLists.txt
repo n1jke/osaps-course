@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.16)
+project(lr6 LANGUAGES CXX)
+
+if(NOT WIN32)
+    message(FATAL_ERROR "lr6 requires Windows and the Win32 SDK")
+endif()
+
+add_executable(lr6 WIN32 src/main.cpp src/monitor.cpp src/output.cpp)
+target_compile_features(lr6 PRIVATE cxx_std_17)
+target_compile_definitions(lr6 PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(lr6 PRIVATE user32 comdlg32 gdi32)
+if(MSVC)
+    target_compile_options(lr6 PRIVATE /W4 /utf-8)
+elseif(MINGW)
+    target_link_options(lr6 PRIVATE -municode)
+endif()
