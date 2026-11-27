@@ -1,0 +1,4 @@
+target_hz,repeats,mean_timer_messages,mean_actual_hz,min_actual_hz,max_actual_hz
+10,3,270.667,9.022,9.0,9.033
+50,3,940,31.333,31.067,31.5
+100,3,1851,61.7,61.367,62.2
